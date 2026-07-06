@@ -1,109 +1,99 @@
 # Figura Ely
 
-Набор из двух частей, который позволяет пользоваться **Figura** (кастомные аватары)
-играя под аккаунтом **Ely.by**:
+**Играй с аватарами [Figura](https://modrinth.com/mod/figura), заходя под аккаунтом [Ely.by](https://ely.by).**
 
-1. **`mod/`** — маленький клиентский мод для Fabric 1.21.x, который перенаправляет
-   Figura на ваш backend.
-2. **`backend/`** — самостоятельный backend Figura на Node.js, который проверяет
-   вход игроков через **Ely.by** (а не через Mojang) и хранит/раздаёт аватары.
+> **English (short).** Figura Ely lets you use **Figura** avatars while you are
+> logged in with an **Ely.by** account. Figura's official backend only accepts
+> Mojang/Microsoft authentication, so this client mod points Figura at an
+> Ely.by‑compatible backend that verifies you through Ely.by instead. Just install
+> it next to Figura and Fabric API, launch the game with Ely.by auth
+> (authlib‑injector / ElyPrismLauncher) — and your avatar works. Client‑side only.
 
-## Почему обычная Figura не работает с Ely.by
+---
 
-Аутентификация в Figura устроена так:
+## Зачем это нужно
 
-1. Клиент просит у backend'а `serverId` (`GET /api/auth/id?username=…`).
-2. Клиент вызывает `joinServer(...)` через **ванильный** session service игры.
-   Если игра запущена через **authlib-injector / ElyPrismLauncher**, этот запрос
-   уходит на серверы **Ely.by**.
-3. Клиент просит backend подтвердить вход (`GET /api/auth/verify?id=…`). Backend
-   делает `hasJoined` и, если всё сошлось, выдаёт токен.
+Figura проверяет владельца аккаунта через сессионные серверы **Mojang**. Если ты
+играешь под **Ely.by** (offline‑экосистема, authlib‑injector), официальный backend
+Figura тебя не пропускает — аватар не грузится и не виден другим.
 
-Официальный backend Figura на шаге 3 спрашивает **только Mojang**, поэтому
-аккаунта Ely.by там нет — и вход не проходит. Обойти это чисто клиентским модом
-нельзя: токен, которому доверяют другие игроки, выдаёт именно backend, и подделать
-его невозможно.
+**Figura Ely** это чинит: мод перенаправляет Figura на backend, который проверяет
+вход через **Ely.by** (`hasJoined` у Ely.by, а не у Mojang). По умолчанию
+используется публичный backend, так что ничего настраивать не нужно — поставил и
+играешь.
 
-**Решение:** свой backend, который делает `hasJoined` у Ely.by
-(`https://authserver.ely.by/api/authlib-injector/sessionserver/session/minecraft/hasJoined`),
-плюс мод, который направляет туда клиент. Именно это и лежит в репозитории.
+## Как это работает
 
+1. Ты запускаешь игру под аккаунтом Ely.by (через authlib‑injector — например,
+   ElyPrismLauncher). Значит, проверка входа Figura (`joinServer`) уже уходит на
+   серверы Ely.by.
+2. Мод подставляет Figura адрес Ely.by‑совместимого backend'а вместо официального.
+3. Backend подтверждает твой вход у Ely.by и выдаёт токен. Аватары грузятся,
+   синхронизируются и видны всем, кто пользуется тем же backend'ом.
+
+Мод чисто **клиентский**, не трогает игровую сессию и общается с Figura через
+рефлексию — поэтому продолжает работать при обновлениях Figura, а если что‑то
+однажды поменяется внутри Figura, он просто напишет в лог, как выставить адрес
+вручную, и не сломает игру.
+
+## Требования
+
+| | |
+|---|---|
+| **Загрузчик** | Fabric (Fabric Loader 0.16+) |
+| **Minecraft** | 1.21.x |
+| **Java** | 21+ |
+| **Зависимости** | [Figura](https://modrinth.com/mod/figura) и [Fabric API](https://modrinth.com/mod/fabric-api) (обязательны) |
+| **Аккаунт** | вход через **Ely.by** с [authlib‑injector](https://docs.ely.by/ru/authlib-injector.html) (проще всего — **ElyPrismLauncher**) |
+
+> Без входа через Ely.by мод бессмысленен: backend проверяет тебя именно у Ely.by.
+> Обычный Microsoft‑аккаунт нужно использовать с обычной Figura.
+
+## Установка
+
+1. Установи **Fabric Loader**, **Fabric API** и **Figura**.
+2. Положи `figura-ely-x.y.z.jar` в папку `mods/`.
+3. Запусти игру под аккаунтом **Ely.by** (authlib‑injector / ElyPrismLauncher).
+4. Готово. Надевай аватар — другие игроки с этим же модом увидят его.
+
+## Настройка (необязательно)
+
+При первом запуске создаётся файл `config/figura-ely.json`:
+
+```json
+{
+  "enabled": true,
+  "backendHost": "ai.bobef.ru"
+}
 ```
-Ely.by session server  ◄── joinServer ── ваш клиент (ElyPrismLauncher + Figura + этот мод)
-        ▲                                        │
-        │ hasJoined                              │ /api/auth/verify, /ws, аватары
-        └──────────── ваш backend ◄─────────────┘
-```
 
-## Что вам понадобится
+- **`enabled`** — выключатель мода (`false` → Figura остаётся на официальном backend'е).
+- **`backendHost`** — адрес Ely.by‑совместимого backend'а. Можно указать свой,
+  в том числе с портом: `"myhost.example:8443"`.
 
-- Игра, запущенная под аккаунтом **Ely.by** через **ElyPrismLauncher** (или любой
-  лаунчер с `authlib-injector=ely.by`). Это ключевой момент: `joinServer` клиента
-  должен уходить именно на Ely.by.
-- Установленные **Figura** и **Fabric API** (Figura и так требует Fabric API).
-- Место, где поднять backend, и **домен с TLS** (см. `backend/README.md`). Figura
-  ходит только по `https://` и `wss://`, поэтому сертификат обязателен.
+После изменения файла перезапусти игру.
 
-## Быстрый старт
+## Свой backend
 
-1. **Backend.** Разверните `backend/` (проще всего `docker compose up -d` с доменом —
-   подробности в [`backend/README.md`](backend/README.md)). Проверьте, что
-   `https://ВАШ_ДОМЕН/api/version` отвечает JSON'ом.
-2. **Мод.** Соберите `mod/` (`./gradlew build`) или возьмите готовый jar из
-   `mod/build/libs/`, положите его в `mods/` рядом с Figura и Fabric API.
-3. **Настройка.** Запустите игру один раз — мод создаст
-   `config/figura-ely.json`. Впишите туда свой домен:
-   ```json
-   { "enabled": true, "backendHost": "figura.example.com" }
-   ```
-   Перезапустите игру. Мод сам пропишет адрес в настройку Figura `server_ip` и
-   переавторизуется. (То же самое можно сделать руками: Figura → Settings → вкладка
-   с красными DEV-настройками → `server_ip`.)
-4. Заходите в игру, надевайте аватар — другие игроки с таким же backend'ом увидят его.
+Публичный backend по умолчанию — общий «островок»: аватары видны только тем, кто
+сидит на том же адресе, и он не связан с основной сетью Figura. Если хочешь полный
+контроль (свой сервер, своя компания, локальная сеть) — можно поднять backend
+самостоятельно (Node.js, Docker + авто‑HTTPS или самоподписанный TLS для LAN) и
+прописать его в `backendHost`. Исходники backend'а и мода — по ссылке **Source** на
+этой странице.
 
-## Игра по локальной сети (LAN) без домена
-
-Для игры с друзьями в одной сети домен не нужен — хватает самоподписанного
-сертификата, а мод **сам раздаёт и устанавливает его**.
-
-1. **Хост.** На машине с backend'ом:
-   ```bash
-   cd backend
-   npm run dev:cert     # создаёт сертификат на localhost + ваш LAN-IP,
-                        # импортирует его локально и кладёт в ресурсы мода
-   npm start            # HOST/PORT/TLS уже прописаны в backend/.env
-   ```
-   Затем пересоберите мод (`cd ../mod && ./gradlew build`), чтобы в jar попал
-   свежий сертификат и адрес хоста.
-2. **Друзья.** Просто дайте им собранный `mod/build/libs/figura-ely-*.jar`
-   (плюс Figura и Fabric API). Больше ничего:
-   - в jar **вшит сертификат**, и мод в `preLaunch` автоматически добавляет его в
-     доверенные для игровой JVM — `keytool` не нужен;
-   - в jar **вшит адрес** backend'а (`backendHost`) — править конфиг не нужно.
-
-   Единственное требование к другу — заходить под аккаунтом **Ely.by**
-   (ElyPrismLauncher / authlib-injector).
-
-> Сменился IP хоста? Перегенерируйте (`REGEN=1 npm run dev:cert`), пересоберите мод
-> и раздайте новый jar. Либо друзья кладут новый `config/figura-ely.crt` рядом с
-> конфигом — мод предпочитает этот файл вшитому и подхватит его без пересборки.
-
-## Подробности
-
-- Настройка и деплой backend'а: [`backend/README.md`](backend/README.md)
-- Исходники мода: [`mod/`](mod/)
-- Как мод устанавливает доверие к сертификату: класс
-  [`FiguraElyTrust`](mod/src/main/java/dev/figuraely/FiguraElyTrust.java)
-  (добавляет **один** сертификат в JVM-truststore или, если файл только для чтения,
-  в runtime-`SSLContext` на сессию; обычную проверку TLS не отключает).
+Для self‑hosted backend'а с **самоподписанным** сертификатом мод умеет добавлять
+доверие автоматически: положи `config/figura-ely.crt` рядом с конфигом (или собери
+jar со вшитым сертификатом) — мод импортирует его в доверенные для игровой JVM при
+запуске. Для публичного домена с обычным сертификатом (Let's Encrypt) это не нужно.
 
 ## Ограничения
 
-- Все, кто хочет видеть аватары друг друга, должны указывать **один и тот же**
-  backend. Со стандартной сетью Figura он не связан — это отдельный «островок».
-- Backend'у нужен TLS. Для публичного домена — обычный Let's Encrypt (Figura и
-  HTTP, и WebSocket проверяет по системному хранилищу JVM). Для локальной сети —
-  самоподписанный сертификат, который мод раздаёт и устанавливает автоматически
-  (см. раздел про LAN выше).
-- Мод и backend не относятся к команде Figura и не связаны с Ely.by — это
-  самостоятельная надстройка.
+- Видят аватары друг друга только те, у кого **один и тот же** `backendHost`.
+- Это отдельная надстройка, **не** связанная с основной сетью Figura.
+- Нужен вход через Ely.by — на Microsoft/Mojang‑аккаунтах смысла нет.
+
+## Дисклеймер
+
+Неофициальный проект. Не связан с командой **Figura** и с **Ely.by**. Figura, Fabric
+и Ely.by принадлежат их авторам. Лицензия мода — **MIT**.
