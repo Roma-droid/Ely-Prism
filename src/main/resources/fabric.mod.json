@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "figura-ely",
+	"version": "${version}",
+	"name": "Figura Ely",
+	"description": "Points Figura at an Ely.by-compatible backend so avatars work when you play with an Ely.by account (via authlib-injector / ElyPrismLauncher).",
+	"authors": [
+		""
+	],
+	"contact": {
+		"sources": "https://modrinth.com/project/figura-ely/settings/description"
+	},
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"preLaunch": [
+			"dev.figuraely.FiguraElyPreLaunch"
+		],
+		"client": [
+			"dev.figuraely.FiguraElyMod"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21",
+		"java": ">=21",
+		"fabric-api": "*",
+		"figura": "*"
+	}
+}
