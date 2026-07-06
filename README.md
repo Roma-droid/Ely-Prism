@@ -1,109 +1,188 @@
-# Figura Ely
+# Figura Ely — backend
 
-Набор из двух частей, который позволяет пользоваться **Figura** (кастомные аватары)
-играя под аккаунтом **Ely.by**:
+Самостоятельный backend Figura (протокол «backend2»), который проверяет вход
+игроков через **Ely.by** вместо Mojang. Написан на Node.js, зависимость всего
+одна (`ws`). Не требует Minecraft-сервера.
 
-1. **`mod/`** — маленький клиентский мод для Fabric 1.21.x, который перенаправляет
-   Figura на ваш backend.
-2. **`backend/`** — самостоятельный backend Figura на Node.js, который проверяет
-   вход игроков через **Ely.by** (а не через Mojang) и хранит/раздаёт аватары.
+Что реализовано:
 
-## Почему обычная Figura не работает с Ely.by
+- HTTP API Figura: `auth/id`, `auth/verify`, `version`, `limits`, `motd`,
+  загрузка/скачивание/удаление аватара, `equip`, получение данных пользователя.
+- Проверка входа через `hasJoined` у Ely.by (authlib-injector sessionserver).
+- Бинарный WebSocket-протокол `/ws`: авторизация, **ретрансляция пингов**,
+  подписки (`SUB`/`UNSUB`) и **события обновления аватара** (`EVENT`) — то есть
+  живая синхронизация анимаций и смены аватаров между игроками.
+- Хранение аватаров на диске (`<uuid>.avtr` + `<uuid>.json`).
 
-Аутентификация в Figura устроена так:
+## Требования
 
-1. Клиент просит у backend'а `serverId` (`GET /api/auth/id?username=…`).
-2. Клиент вызывает `joinServer(...)` через **ванильный** session service игры.
-   Если игра запущена через **authlib-injector / ElyPrismLauncher**, этот запрос
-   уходит на серверы **Ely.by**.
-3. Клиент просит backend подтвердить вход (`GET /api/auth/verify?id=…`). Backend
-   делает `hasJoined` и, если всё сошлось, выдаёт токен.
+- Node.js 18+ (проверено на 26). Либо Docker.
+- **Домен + TLS.** Figura подключается только по `https://` и `wss://`, поэтому
+  нужен валидный сертификат. Обычный Let's Encrypt подходит — Figura добавляет
+  свой CA поверх системного хранилища, а не заменяет его. Способ ниже (Caddy)
+  получает и продлевает сертификат автоматически.
 
-Официальный backend Figura на шаге 3 спрашивает **только Mojang**, поэтому
-аккаунта Ely.by там нет — и вход не проходит. Обойти это чисто клиентским модом
-нельзя: токен, которому доверяют другие игроки, выдаёт именно backend, и подделать
-его невозможно.
+## Локальный тест без домена (localhost)
 
-**Решение:** свой backend, который делает `hasJoined` у Ely.by
-(`https://authserver.ely.by/api/authlib-injector/sessionserver/session/minecraft/hasJoined`),
-плюс мод, который направляет туда клиент. Именно это и лежит в репозитории.
+Домен и `FIGURA_DOMAIN` нужны только для публичного хостинга. Для проверки на
+своей машине их указывать **не надо** — Figura всё равно требует `https`/`wss`,
+поэтому нужен лишь локально доверенный сертификат. Скрипт делает всё за вас:
+генерирует сертификат для `localhost` и импортирует его в `cacerts` той JVM,
+которой ваш лаунчер запускает игру (по умолчанию — Java 21 из ElyPrismLauncher,
+её использует MC 1.21.x).
 
+```bash
+cd backend
+npm run dev:cert                       # сгенерировать + импортировать сертификат
+#   иначе: ./scripts/dev-cert.sh /путь/до/java/lib/security/cacerts
+
+npm start                              # берёт TLS_CERT/TLS_KEY из .env
 ```
-Ely.by session server  ◄── joinServer ── ваш клиент (ElyPrismLauncher + Figura + этот мод)
-        ▲                                        │
-        │ hasJoined                              │ /api/auth/verify, /ws, аватары
-        └──────────── ваш backend ◄─────────────┘
+
+`npm start` автоматически читает `.env` (там уже прописаны `HOST=0.0.0.0`,
+`PORT=4000` и пути к сертификату). Проверка, что TLS поднялся:
+
+```bash
+curl --cacert certs/figura-ely.crt https://localhost:4000/api/version
+# -> {"prerelease":"...","release":"..."}
 ```
 
-## Что вам понадобится
+Затем в игре в `config/figura-ely.json` пропишите `"backendHost": "localhost:4000"`
+и перезапустите клиент. Откатить импорт сертификата:
+`keytool -delete -alias figura-ely-localhost -keystore <путь-до-cacerts> -storepass changeit`.
 
-- Игра, запущенная под аккаунтом **Ely.by** через **ElyPrismLauncher** (или любой
-  лаунчер с `authlib-injector=ely.by`). Это ключевой момент: `joinServer` клиента
-  должен уходить именно на Ely.by.
-- Установленные **Figura** и **Fabric API** (Figura и так требует Fabric API).
-- Место, где поднять backend, и **домен с TLS** (см. `backend/README.md`). Figura
-  ходит только по `https://` и `wss://`, поэтому сертификат обязателен.
+> Если инстанс использует другую Java (Prism → Instance → Settings → Java), передайте
+> путь к её `cacerts` первым аргументом скрипта.
 
-## Быстрый старт
+## Доступ по локальной сети (друзья на том же роутере)
 
-1. **Backend.** Разверните `backend/` (проще всего `docker compose up -d` с доменом —
-   подробности в [`backend/README.md`](backend/README.md)). Проверьте, что
-   `https://ВАШ_ДОМЕН/api/version` отвечает JSON'ом.
-2. **Мод.** Соберите `mod/` (`./gradlew build`) или возьмите готовый jar из
-   `mod/build/libs/`, положите его в `mods/` рядом с Figura и Fabric API.
-3. **Настройка.** Запустите игру один раз — мод создаст
-   `config/figura-ely.json`. Впишите туда свой домен:
-   ```json
-   { "enabled": true, "backendHost": "figura.example.com" }
-   ```
-   Перезапустите игру. Мод сам пропишет адрес в настройку Figura `server_ip` и
-   переавторизуется. (То же самое можно сделать руками: Figura → Settings → вкладка
-   с красными DEV-настройками → `server_ip`.)
-4. Заходите в игру, надевайте аватар — другие игроки с таким же backend'ом увидят его.
+Тот же self-signed сертификат годится и для LAN — скрипт автоматически добавляет
+в него твой локальный IP (пропускает VPN/виртуальные интерфейсы). Порядок:
 
-## Игра по локальной сети (LAN) без домена
-
-Для игры с друзьями в одной сети домен не нужен — хватает самоподписанного
-сертификата, а мод **сам раздаёт и устанавливает его**.
-
-1. **Хост.** На машине с backend'ом:
+1. **Хост.** Сгенерировать сертификат и поднять backend на всех интерфейсах:
    ```bash
-   cd backend
-   npm run dev:cert     # создаёт сертификат на localhost + ваш LAN-IP,
-                        # импортирует его локально и кладёт в ресурсы мода
-   npm start            # HOST/PORT/TLS уже прописаны в backend/.env
+   npm run dev:cert      # сертификат покрывает localhost + твой LAN-IP
+   npm start             # HOST/PORT/TLS берутся из .env
    ```
-   Затем пересоберите мод (`cd ../mod && ./gradlew build`), чтобы в jar попал
-   свежий сертификат и адрес хоста.
-2. **Друзья.** Просто дайте им собранный `mod/build/libs/figura-ely-*.jar`
-   (плюс Figura и Fabric API). Больше ничего:
-   - в jar **вшит сертификат**, и мод в `preLaunch` автоматически добавляет его в
-     доверенные для игровой JVM — `keytool` не нужен;
-   - в jar **вшит адрес** backend'а (`backendHost`) — править конфиг не нужно.
+   Убедись, что TCP-порт `4000` открыт в фаерволе хоста (если он включён:
+   `sudo firewall-cmd --add-port=4000/tcp` или `sudo ufw allow 4000/tcp`).
 
-   Единственное требование к другу — заходить под аккаунтом **Ely.by**
-   (ElyPrismLauncher / authlib-injector).
+2. **Каждый друг (один раз на ПК).** Скопировать **публичный** файл
+   `backend/certs/figura-ely.crt` (НЕ `.key`) и импортировать в `cacerts` своей
+   игровой JVM:
+   ```bash
+   keytool -importcert -noprompt -alias figura-ely \
+     -file figura-ely.crt \
+     -keystore <их-java>/lib/security/cacerts -storepass changeit
+   # ElyPrismLauncher 1.21.x -> java/java-runtime-delta/lib/security/cacerts
+   ```
+   Затем поставить мод `figura-ely` рядом с Figura + Fabric API. В моде уже прошит
+   `backendHost` хоста, так что править конфиг не нужно — только импорт сертификата
+   и вход через Ely.by (ElyPrismLauncher / authlib-injector).
 
-> Сменился IP хоста? Перегенерируйте (`REGEN=1 npm run dev:cert`), пересоберите мод
-> и раздайте новый jar. Либо друзья кладут новый `config/figura-ely.crt` рядом с
-> конфигом — мод предпочитает этот файл вшитому и подхватит его без пересборки.
+> Каждый игрок должен покрываться сертификатом по тому адресу, по которому
+> подключается. Если IP хоста сменится — перегенерируй сертификат
+> (`REGEN=1 npm run dev:cert`) и раздай новый `.crt` заново.
 
-## Подробности
+## Вариант 1. Docker + Caddy (рекомендуется, для публичного хостинга)
 
-- Настройка и деплой backend'а: [`backend/README.md`](backend/README.md)
-- Исходники мода: [`mod/`](mod/)
-- Как мод устанавливает доверие к сертификату: класс
-  [`FiguraElyTrust`](mod/src/main/java/dev/figuraely/FiguraElyTrust.java)
-  (добавляет **один** сертификат в JVM-truststore или, если файл только для чтения,
-  в runtime-`SSLContext` на сессию; обычную проверку TLS не отключает).
+Автоматический HTTPS для вашего домена.
 
-## Ограничения
+```bash
+cd backend
+cp .env.example .env
+# впишите FIGURA_DOMAIN=ваш.домен (A/AAAA-запись должна указывать на эту машину,
+# порты 80 и 443 открыты)
+docker compose up -d
+```
 
-- Все, кто хочет видеть аватары друг друга, должны указывать **один и тот же**
-  backend. Со стандартной сетью Figura он не связан — это отдельный «островок».
-- Backend'у нужен TLS. Для публичного домена — обычный Let's Encrypt (Figura и
-  HTTP, и WebSocket проверяет по системному хранилищу JVM). Для локальной сети —
-  самоподписанный сертификат, который мод раздаёт и устанавливает автоматически
-  (см. раздел про LAN выше).
-- Мод и backend не относятся к команде Figura и не связаны с Ely.by — это
-  самостоятельная надстройка.
+Проверка:
+
+```bash
+curl https://ваш.домен/api/version   # -> {"prerelease":"...","release":"..."}
+```
+
+В Figura укажите `server_ip = ваш.домен` (или впишите домен в `config/figura-ely.json`
+мода — он сделает это сам).
+
+## Вариант 2. Node напрямую
+
+За вашим обратным прокси (nginx/Caddy/traefik), который отвечает за TLS:
+
+```bash
+cd backend
+npm install
+DATA_DIR=./data PORT=4000 npm start
+```
+
+Прокси должен направлять и обычные запросы, и WebSocket `/ws` на `127.0.0.1:4000`.
+Пример для nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name figura.example.com;
+    ssl_certificate     /etc/letsencrypt/live/figura.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/figura.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;     # для /ws
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+### Терминация TLS прямо в Node (без прокси)
+
+Если сертификат уже есть, можно обойтись без прокси:
+
+```bash
+TLS_CERT=/path/fullchain.pem TLS_KEY=/path/privkey.pem PORT=443 npm start
+```
+
+Тогда в Figura адрес будет просто `ваш.домен` (порт 443 по умолчанию). Для
+нестандартного порта используйте формат `ваш.домен:8443`.
+
+## Настройки (переменные окружения)
+
+| Переменная          | По умолчанию                                   | Назначение |
+|---------------------|------------------------------------------------|------------|
+| `HOST`              | `0.0.0.0`                                       | Интерфейс прослушивания |
+| `PORT`              | `4000`                                          | Порт |
+| `TLS_CERT`/`TLS_KEY`| —                                               | Прямой TLS в Node (PEM) |
+| `DATA_DIR`          | `./data`                                        | Где хранить аватары |
+| `ELY_HASJOINED_URL` | `.../api/authlib-injector/sessionserver/session/minecraft/hasJoined` | Эндпоинт проверки Ely.by |
+| `TOKEN_TTL_MS`      | `86400000`                                       | Срок жизни токена сессии |
+| `MAX_AVATAR_SIZE`   | `100000`                                         | Лимит размера аватара (байт) |
+| `MAX_AVATARS`       | `10`                                             | Лимит числа аватаров |
+| `DEFAULT_TRUST`     | `1`                                              | Уровень доверия по умолчанию |
+| `DEBUG`             | `false`                                          | Подробные логи запросов |
+
+> ⚠️ `ELY_HASJOINED_URL` должен указывать на **тот же** session-сервер, куда уходит
+> `join` вашего клиента. При стандартном `authlib-injector=ely.by` (в т.ч.
+> ElyPrismLauncher) значение по умолчанию верное.
+
+## Проверка протокола
+
+В комплекте есть тесты (мок Ely.by, полный цикл авторизации, загрузка/экип/
+скачивание аватара, ретрансляция пингов и события по WebSocket):
+
+```bash
+npm run selftest   # проверка кодирования бинарного протокола
+node test/smoke.mjs # сквозной тест HTTP + WebSocket
+```
+
+## Как это работает (кратко)
+
+```
+GET /api/auth/id?username=Ник      -> serverId (кладём в "ожидающие" сессии)
+   (клиент делает joinServer к Ely.by с этим serverId)
+GET /api/auth/verify?id=serverId   -> hasJoined у Ely.by -> при успехе выдаём token
+WebSocket /ws, первое сообщение     -> [0x00][token]  -> сервер отвечает [0x00] (AUTH)
+```
+
+UUID берётся из ответа Ely.by `hasJoined` (`id`) и приводится к каноническому виду,
+поэтому совпадает с тем, что игра показывает у игрока.
