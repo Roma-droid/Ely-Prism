@@ -1,0 +1,43 @@
+# Runs the backend behind Caddy, which obtains and renews a Let's Encrypt
+# certificate automatically for $FIGURA_DOMAIN. Requires ports 80 and 443 open
+# and a DNS record pointing at this machine.
+#
+#   cp .env.example .env      # set FIGURA_DOMAIN
+#   docker compose up -d
+#
+# Then in Figura set server_ip = your FIGURA_DOMAIN (see the mod / README).
+
+services:
+  backend:
+    build: .
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATA_DIR: /data
+      ELY_HASJOINED_URL: ${ELY_HASJOINED_URL:-https://authserver.ely.by/api/authlib-injector/sessionserver/session/minecraft/hasJoined}
+      SERVER_NAME: ${SERVER_NAME:-Figura Ely Backend}
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      - ./data:/data
+    expose:
+      - "4000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FIGURA_DOMAIN: ${FIGURA_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

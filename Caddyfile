@@ -1,0 +1,7 @@
+# Caddy terminates TLS (auto Let's Encrypt) and proxies both HTTP and the
+# /ws WebSocket to the Node backend. WebSocket upgrades are handled
+# transparently by reverse_proxy.
+{$FIGURA_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:4000
+}
